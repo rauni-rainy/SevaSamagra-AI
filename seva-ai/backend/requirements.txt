@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+python-dotenv
+spacy
+google-generativeai
+google-genai
+twilio
+python-socketio
+geoalchemy2
+alembic
+pydantic-settings
+requests
+celery
