@@ -13,7 +13,7 @@ from services.matching_engine import find_matched_volunteers
 
 router = APIRouter(prefix="/alerts", tags=["Alerts"])
 
-@router.get("/")
+@router.get("")
 async def get_alerts(
     is_active: bool = Query(True),
     db: Session = Depends(get_db)

@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 
 VALID_BIO_MARKERS = {
     "stagnant_water", "waterborne_risk", "vector_risk",
-    "sanitation_failure", "water_supply"
+    "sanitation_failure", "water_supply",
+    "respiratory_hazard", "animal_hazard", "waste_accumulation", "fever_cluster"
 }
 VALID_URGENCY = {"low", "medium", "high", "critical"}
 VALID_CONFIDENCE = {"high", "medium", "low", "none"}
@@ -58,60 +59,76 @@ def _forward_geocode(query: str) -> tuple[float | None, float | None]:
     return None, None
 
 
-GEMINI_PROMPT = """You are an AI analyst for SevaAI, a bio-risk field intelligence platform in India.
-
-A field coordinator has submitted this voice/text report. It may be in Hindi (Romanized), English, or mixed:
+GEMINI_PROMPT = """You are an expert geolocation extraction engine and bio-risk analyst specialized in Indian languages, particularly Hinglish (a mix of Hindi and English). Your job is to extract, verify, and geolocate place mentions from informal text inputs, as well as extract public health intelligence.
 
 ---
 {text}
 ---
 
-Your job: extract structured intelligence. Return a SINGLE valid JSON object — no markdown, no explanation, just the JSON.
+## PRECISION EXTRACTION RULES (MANDATORY)
+You MUST extract location at the MOST GRANULAR level possible.
+Extraction priority order (most specific = best):
+  Level 1 (BEST)   → Street / Road name       e.g. "90 Feet Road"
+  Level 2          → Locality / Chawl / Block  e.g. "Koliwada section"
+  Level 3          → Neighbourhood / Zone      e.g. "Dharavi"
+  Level 4          → District / Tehsil         e.g. "Kurla"
+  Level 5 (WORST)  → City only                 e.g. "Mumbai"
+
+RULE: If you only return a city name, your extraction has FAILED.
+City-only output is only acceptable when zero sub-area info exists.
+
+## HINGLISH LOCATION PARSING RULES
+In Hinglish sentences, location names appear BEFORE grammar particles.
+Grammar particles to strip away — these are NOT part of the place name:
+  - "mein"   (in)
+  - "se"     (from)
+  - "ke paas" (near)
+  - "par"    (on/at)
+  - "wala"   (the one near)
+  - "ke andar" (inside)
+  - "ke bahar" (outside)
+  - "ke saamne" (in front of)
+  - "ke peeche" (behind)
+
+EXAMPLES of correct entity boundary detection:
+  ❌ WRONG: "Mumbai mein"  → extracts "Mumbai mein"
+  ✅ RIGHT: "Mumbai mein"  → extracts "Mumbai" (strip "mein")
+  ❌ WRONG: "Dharavi, Mumbai mein Koliwada section se" → extracts only "Mumbai"
+  ✅ RIGHT: Same text → extracts: primary = "Koliwada section", area = "Dharavi", city = "Mumbai"
+
+## RELATIVE LANDMARK EXTRACTION
+Even if a place has no official name, extract it as a relative_landmark for field teams. These phrases are valid:
+  - "pump ke paas"         → near water pump
+  - "overhead tank ke paas" → near overhead tank
+  - "chawl ke andar"       → inside chawl building
+  - "nale ke bagal mein"   → beside the drain
+
+## URGENCY & BIO-MARKER RULES
+• Urgency -> critical: 3+ people sick, epidemic words; high: drainage failure, sewage overflow; medium: water quality complaint; low: general sanitation.
+• Bio-Markers MUST be from this exact list: stagnant_water, waterborne_risk, vector_risk, sanitation_failure, water_supply, respiratory_hazard, animal_hazard, waste_accumulation, fever_cluster
+
+## REQUIRED OUTPUT STRUCTURE
+Always respond with the following JSON structure and nothing else:
 
 {{
-  "extracted_location": "<display name of the specific place — neighbourhood, colony, mohalla, landmark, village, city>",
-  "geocodeable_location": "<OpenStreetMap-ready search query, always include city/state if known, e.g. 'Hauz Khas, New Delhi' or 'Dharavi, Mumbai' or 'Sector 15, Noida, Uttar Pradesh'>",
-  "location_confidence": "<high | medium | low | none>",
+  "extraction_level": "street | locality | neighbourhood | city",
+  "primary_location": "<most specific place found>",
+  "area": "<neighbourhood / zone>",
+  "city": "<city>",
+  "state": "<state>",
+  "relative_landmark": "<nearby unnamed reference if any>",
+  "full_address_reconstructed": "<human readable full address>",
+  "latitude": <most granular lat possible or null>,
+  "longitude": <most granular lng possible or null>,
+  "confidence": "high | medium | low",
+  "extraction_warning": "<null, or reason if city-only>",
+
   "extracted_need": "<one clear English sentence summarising the core public health problem>",
   "urgency_level": "<low | medium | high | critical>",
-  "bio_markers_detected": ["<zero or more from ONLY this list: stagnant_water, waterborne_risk, vector_risk, sanitation_failure, water_supply>"],
+  "bio_markers_detected": ["<zero or more from ONLY the valid list>"],
   "language_detected": "<hindi | english | mixed>"
 }}
-
-━━━ LOCATION RULES ━━━
-
-STEP 1 — Extract the place:
-• Accept well-known Indian place names in any script variant: "Hauz Khas", "Lajpat Nagar", "Govindpuri", "Dharavi", "Saket", "Tilak Nagar", "Sector 22 Noida", etc.
-• Hindi Romanized forms are valid: "Hauz khas", "lal kuan", "govindpuri", "najafgarh"
-• Extract the MOST SPECIFIC geographic name: colony > area > city
-
-STEP 2 — Verify it is a real Indian location:
-• Ask yourself: "Would this appear as a named place on Google Maps or OpenStreetMap in India?"
-• Famous Indian areas ALWAYS get confidence=high: Hauz Khas, Connaught Place, Dharavi, Lajpat Nagar, Sarojini Nagar, Karol Bagh, Andheri, etc.
-• Tier-2 city areas get confidence=medium: known colonies, sectors, villages in smaller cities
-• HARD REJECT — these are NEVER places: "yahan", "wahan", "yha", "mai", "kal", "aaj", "pump", "naali", "ghar", "paas", "ke", "se", "mein", "hai"
-• If ONLY rejected words exist → extracted_location="Unknown", geocodeable_location="Unknown", confidence=none
-
-STEP 3 — Format geocodeable_location for OpenStreetMap:
-• Always add city/state context: "Hauz Khas, New Delhi" NOT just "Hauz Khas"
-• Use English spellings for the geocode query (not transliterated forms): "Lal Kuan, Delhi" not "lal kuan"
-• If city is unknown but state can be inferred, add state
-• geocodeable_location must be the best possible search string to find this on a map
-
-━━━ URGENCY RULES ━━━
-• critical: 3+ people sick/affected, children sick, days without water, epidemic words (cholera, dengue outbreak), emergency
-• high: drainage failure, sewage overflow, stagnant water near residential area, fever spreading
-• medium: water quality complaint, single sick person, blocked drain reported
-• low: general sanitation concern, preventive alert
-
-━━━ BIO MARKER RULES ━━━
-stagnant_water → standing water, naali band, ruka hua paani, blocked drain, paani ruka
-waterborne_risk → diarrhea, loose motions, vomiting, stomach pain, pet dard, ulti, cholera
-vector_risk → mosquitoes, machhar, machar, rats, chuhe, foul smell, badbu, dengue, malaria
-sanitation_failure → open defecation, sewage overflow, naali uf rahi, dirty water, ganda paani
-water_supply → no water, paani nahi, handpump broken, handpump kharab, no drinking water
-
-Return ONLY the JSON. No ```json. No extra text."""
+"""
 
 
 def extract_with_gemini(text: str) -> dict:
@@ -147,9 +164,23 @@ def extract_with_gemini(text: str) -> dict:
         parsed: dict = json.loads(raw)
 
         # ── Sanitise fields ──────────────────────────────────────────────
-        extracted_location = str(parsed.get("extracted_location", "Unknown")).strip()
-        geocodeable_location = str(parsed.get("geocodeable_location", extracted_location)).strip()
-        location_confidence = parsed.get("location_confidence", "none")
+        primary_location = str(parsed.get("primary_location", "")).strip()
+        area = str(parsed.get("area", "")).strip()
+        city = parsed.get("city")
+        state = parsed.get("state")
+
+        # Build extracted_location logic
+        loc_parts = [p for p in (primary_location, area, city) if p and p.lower() not in ("none", "null")]
+        extracted_location = ", ".join(loc_parts)
+        if not extracted_location:
+            landmark = str(parsed.get("relative_landmark", "")).strip()
+            extracted_location = landmark if landmark and landmark.lower() not in ("none", "null") else "Unknown"
+        
+        # Build geocodeable query using area/city/state
+        geocode_parts = [p for p in (primary_location, area, city, state) if p and p.lower() not in ("none", "null")]
+        geocodeable_location = ", ".join(geocode_parts)
+        
+        location_confidence = str(parsed.get("confidence", "none")).strip().lower()
         if location_confidence not in VALID_CONFIDENCE:
             location_confidence = "none"
 
@@ -165,16 +196,18 @@ def extract_with_gemini(text: str) -> dict:
         language_detected = str(parsed.get("language_detected", "mixed")).strip()
 
         # ── Geocoding gate ───────────────────────────────────────────────
-        latitude, longitude = None, None
-        if location_confidence in ("high", "medium") and geocodeable_location.lower() not in ("unknown", "", "none"):
-            latitude, longitude = _forward_geocode(geocodeable_location)
-            # If the AI-formatted query fails, try the raw display name as fallback
-            if latitude is None and extracted_location.lower() not in ("unknown", ""):
-                logger.info(f"Retrying geocode with display name: '{extracted_location}'")
-                latitude, longitude = _forward_geocode(extracted_location)
-        elif location_confidence == "low" and geocodeable_location.lower() not in ("unknown", ""):
-            # Try anyway for low confidence — better than no coords
-            latitude, longitude = _forward_geocode(geocodeable_location)
+        latitude = parsed.get("latitude")
+        longitude = parsed.get("longitude")
+        
+        # If AI didn't provide coordinates or we have medium/low confidence, fallback to OpenStreetMap
+        if not latitude or not longitude:
+            if location_confidence in ("high", "medium") and geocodeable_location.lower() not in ("unknown", "", "none"):
+                latitude, longitude = _forward_geocode(geocodeable_location)
+                if latitude is None and extracted_location.lower() not in ("unknown", ""):
+                    logger.info(f"Retrying geocode with display name: '{extracted_location}'")
+                    latitude, longitude = _forward_geocode(extracted_location)
+            elif location_confidence == "low" and geocodeable_location.lower() not in ("unknown", ""):
+                latitude, longitude = _forward_geocode(geocodeable_location)
 
         logger.info(
             f"Gemini NER ✓ | display='{extracted_location}' | "
@@ -199,8 +232,16 @@ def extract_with_gemini(text: str) -> dict:
 
 
 def _legacy_fallback(text: str) -> dict:
-    """Regex-based NER with no geocoding."""
+    """Regex-based NER with OpenStreetMap geocoding fallback."""
     result = extract_need_info(text)
-    result["latitude"] = None
-    result["longitude"] = None
+    
+    location = result.get("extracted_location")
+    if location and location.lower() not in ("unknown", "", "none"):
+        lat, lon = _forward_geocode(location)
+        result["latitude"] = lat
+        result["longitude"] = lon
+    else:
+        result["latitude"] = None
+        result["longitude"] = None
+        
     return result

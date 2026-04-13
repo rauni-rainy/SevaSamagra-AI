@@ -63,7 +63,7 @@ def _serialize_assignment(assignment: VolunteerAssignment, volunteer: Volunteer 
     return result
 
 
-@router.get("/")
+@router.get("")
 async def get_assignments(
     alert_id: Optional[str] = Query(None),
     volunteer_id: Optional[str] = Query(None),
@@ -83,7 +83,7 @@ async def get_assignments(
     return [_serialize_assignment(a) for a in assignments]
 
 
-@router.post("/", status_code=201)
+@router.post("", status_code=201)
 async def create_assignment(payload: AssignmentCreate, db: Session = Depends(get_db)):
     """
     Assign a volunteer to an alert:

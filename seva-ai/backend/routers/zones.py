@@ -13,7 +13,7 @@ from schemas.zone import ZoneResponse
 
 router = APIRouter(prefix="/zones", tags=["Zones"])
 
-@router.get("/", response_model=List[ZoneResponse])
+@router.get("", response_model=List[ZoneResponse])
 async def get_zones(db: Session = Depends(get_db)):
     """
     Retrieve all defined geographic zones and their calculated risk levels.

@@ -24,7 +24,7 @@ class SimulateVoiceRequest(BaseModel):
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
-@router.get("/", response_model=PaginatedReports)
+@router.get("", response_model=PaginatedReports)
 async def get_reports(
     zone_id: Optional[str] = Query(None),
     urgency_level: Optional[str] = Query(None),
@@ -72,7 +72,7 @@ async def get_report(report_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Report not found")
     return report
 
-@router.post("/", response_model=ReportResponse)
+@router.post("", response_model=ReportResponse)
 async def create_report(report_in: ReportCreate, db: Session = Depends(get_db)):
     """
     Manual report creation (e.g. for paper/WhatsApp input).
@@ -144,9 +144,6 @@ async def simulate_voice_report(req: SimulateVoiceRequest, db: Session = Depends
     # --- Gemini AI NER (single prompt: location + urgency + biomarkers + geocoords) ---
     extracted_data = extract_with_gemini(text)
 
-    zone = db.query(Zone).first()  # Grab first zone for demo
-    zone_id = zone.id if zone else None
-
     try:
         urgency_level = UrgencyLevel(extracted_data["urgency_level"])
     except ValueError:
@@ -154,7 +151,22 @@ async def simulate_voice_report(req: SimulateVoiceRequest, db: Session = Depends
 
     lat = extracted_data.get("latitude")
     lon = extracted_data.get("longitude")
-    point_str = f"SRID=4326;POINT({lon} {lat})" if lat is not None and lon is not None else None
+    point_str = None
+
+    zone_id = None
+    if lat is not None and lon is not None:
+        point_str = f"SRID=4326;POINT({lon} {lat})"
+        from sqlalchemy import func
+        point = func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326)
+        zone = db.query(Zone).filter(func.ST_Intersects(Zone.boundary, point)).first()
+        if not zone:
+            zone = db.query(Zone).order_by(func.ST_Distance(Zone.boundary, point)).first()
+        if zone:
+            zone_id = zone.id
+    
+    if not zone_id:
+        zone = db.query(Zone).first() 
+        zone_id = zone.id if zone else None
 
     report = FieldReport(
         zone_id=zone_id,
@@ -215,17 +227,29 @@ async def create_manual_report_entry(req: ManualReportEntry, db: Session = Depen
         
     extracted_data = extract_need_info(text)
     
-    zone = db.query(Zone).first() # Grab first zone for demo
-    zone_id = zone.id if zone else None
-
     try:
         urgency_level = UrgencyLevel(extracted_data["urgency_level"])
     except ValueError:
         urgency_level = UrgencyLevel.medium
 
     point_str = None
+    zone_id = None
+    
     if req.latitude is not None and req.longitude is not None:
         point_str = f"SRID=4326;POINT({req.longitude} {req.latitude})"
+        from sqlalchemy import func
+        point = func.ST_SetSRID(func.ST_MakePoint(req.longitude, req.latitude), 4326)
+        zone = db.query(Zone).filter(func.ST_Intersects(Zone.boundary, point)).first()
+        if not zone:
+            zone = db.query(Zone).order_by(func.ST_Distance(Zone.boundary, point)).first()
+        if zone:
+            zone_id = zone.id
+    
+    if not zone_id:
+        zone = db.query(Zone).first()
+        zone_id = zone.id if zone else None
+
+    if req.latitude is not None and req.longitude is not None:
         
         # Reverse Geocode attempt
         resolved_location = None

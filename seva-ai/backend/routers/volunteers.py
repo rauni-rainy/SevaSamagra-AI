@@ -28,7 +28,7 @@ def _build_point_wkt(lat: float, lon: float) -> str:
 
 # ─── Routes ──────────────────────────────────────────────────────────────────
 
-@router.get("/", response_model=List[VolunteerResponse])
+@router.get("", response_model=List[VolunteerResponse])
 async def get_volunteers(
     is_available: Optional[bool] = Query(None),
     skill: Optional[str] = Query(None),
@@ -139,7 +139,7 @@ async def get_volunteer_profile(id: str, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/", response_model=VolunteerResponse, status_code=201)
+@router.post("", response_model=VolunteerResponse, status_code=201)
 async def create_volunteer(vol_in: VolunteerCreate, db: Session = Depends(get_db)):
     """
     Register a new volunteer. If latitude and longitude are provided,

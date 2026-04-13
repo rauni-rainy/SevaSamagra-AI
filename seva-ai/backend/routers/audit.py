@@ -9,7 +9,7 @@ from schemas.audit import AuditLogResponse, PaginatedAuditLogs
 
 router = APIRouter(prefix="/audit", tags=["Audit"])
 
-@router.get("/", response_model=PaginatedAuditLogs)
+@router.get("", response_model=PaginatedAuditLogs)
 async def get_audit_logs(
     entity_type: Optional[str] = Query(None),
     page: int = Query(1, ge=1),

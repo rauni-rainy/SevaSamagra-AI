@@ -6,7 +6,7 @@ from models.report import FieldReport, SourceType, UrgencyLevel
 from models.audit_log import AuditLog
 from models.zone import Zone
 from services.transcription import transcribe_audio
-from services.ner_extractor import extract_need_info
+from services.gemini_ner import extract_with_gemini
 from services.zone_risk_service import update_zone_bio_risk
 from websocket.socket_manager import socket_manager
 
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/voice", tags=["Voice Webhooks"])
 # Simple in-memory cache for idempotency check on Twilio retries
 processed_recording_urls = set()
 
-@router.get("/")
+@router.get("")
 async def get_voice_status():
     """
     Status of the Voice / IVR pipeline.
@@ -66,20 +66,38 @@ async def handle_recording(request: Request, db: Session = Depends(get_db)):
         logger.error("Transcription resulted in empty text.")
         return Response(content='<Response><Say>Transcription failed.</Say></Response>', media_type="application/xml")
         
-    # 2. Extract NER Need Info
-    extracted_data = extract_need_info(transcript)
+    # 2. Extract NER Need Info (using Gemini AI)
+    extracted_data = extract_with_gemini(transcript)
     
-    # Optional logic: pick first zone for the demo context
-    zone = db.query(Zone).first()
-    zone_id = zone.id if zone else None
-
-    # Determine Enum values
+    # 3. Determine Enum values
     try:
         urgency_level = UrgencyLevel(extracted_data["urgency_level"])
     except ValueError:
         urgency_level = UrgencyLevel.medium
 
-    # 3. Create Field Report
+    # 4. Spatial Zone Mapping
+    zone_id = None
+    lat = extracted_data.get("latitude")
+    lon = extracted_data.get("longitude")
+    point_str = None
+    
+    if lat is not None and lon is not None:
+        point_str = f"SRID=4326;POINT({lon} {lat})"
+        from sqlalchemy import func
+        point = func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326)
+        # Find zone intersecting this point
+        zone = db.query(Zone).filter(func.ST_Intersects(Zone.boundary, point)).first()
+        if not zone:
+            # Fallback to nearest zone
+            zone = db.query(Zone).order_by(func.ST_Distance(Zone.boundary, point)).first()
+        if zone:
+            zone_id = zone.id
+    
+    if not zone_id:
+        zone = db.query(Zone).first()  # Fallback to first configured zone
+        zone_id = zone.id if zone else None
+
+    # 5. Create Field Report
     field_report = FieldReport(
         zone_id=zone_id,
         source_type=SourceType.voice,
@@ -87,7 +105,10 @@ async def handle_recording(request: Request, db: Session = Depends(get_db)):
         extracted_need=extracted_data["extracted_need"],
         extracted_location=extracted_data["extracted_location"],
         urgency_level=urgency_level,
-        bio_markers_detected=extracted_data["bio_markers_detected"]
+        bio_markers_detected=extracted_data["bio_markers_detected"],
+        latitude=lat,
+        longitude=lon,
+        coordinates=point_str
     )
     db.add(field_report)
     db.commit()
@@ -135,16 +156,31 @@ async def test_voice_pipeline(text: str, db: Session = Depends(get_db)):
     if not text:
         return {"error": "Provide 'text' parameter."}
 
-    extracted_data = extract_need_info(text)
+    extracted_data = extract_with_gemini(text)
     
-    zone = db.query(Zone).first()
-    zone_id = zone.id if zone else None
-
-    # Determine Enum values
     try:
         urgency_level = UrgencyLevel(extracted_data["urgency_level"])
     except ValueError:
         urgency_level = UrgencyLevel.medium
+
+    zone_id = None
+    lat = extracted_data.get("latitude")
+    lon = extracted_data.get("longitude")
+    point_str = None
+    
+    if lat is not None and lon is not None:
+        point_str = f"SRID=4326;POINT({lon} {lat})"
+        from sqlalchemy import func
+        point = func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326)
+        zone = db.query(Zone).filter(func.ST_Intersects(Zone.boundary, point)).first()
+        if not zone:
+            zone = db.query(Zone).order_by(func.ST_Distance(Zone.boundary, point)).first()
+        if zone:
+            zone_id = zone.id
+    
+    if not zone_id:
+        zone = db.query(Zone).first()
+        zone_id = zone.id if zone else None
 
     field_report = FieldReport(
         zone_id=zone_id,
@@ -153,7 +189,10 @@ async def test_voice_pipeline(text: str, db: Session = Depends(get_db)):
         extracted_need=extracted_data["extracted_need"],
         extracted_location=extracted_data["extracted_location"],
         urgency_level=urgency_level,
-        bio_markers_detected=extracted_data["bio_markers_detected"]
+        bio_markers_detected=extracted_data["bio_markers_detected"],
+        latitude=lat,
+        longitude=lon,
+        coordinates=point_str
     )
     db.add(field_report)
     db.commit()
