@@ -4,7 +4,8 @@
 
 SevaSamagra AI transforms unstructured field data—like voice calls and on-the-ground observations—into actionable spatial intelligence. By bridging the gap between field reporting and central coordination, it enables rapid, data-driven disaster relief, volunteer dispatch, and hazard management.
 
-![SevaSamagra AI Dashboard](docs/dashboard-preview.png) *(Note: Add a screenshot of your dashboard here)*
+
+<img width="1900" height="866" alt="Screenshot 2026-04-14 125758" src="https://github.com/user-attachments/assets/69ab3b11-c7ca-4262-b495-2b8631d782c0" />
 
 ## 🚀 Key Features
 
