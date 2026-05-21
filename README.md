@@ -33,7 +33,7 @@ SevaSamagra AI transforms unstructured field data—like voice calls and on-the-
 
 ### Infrastructure
 - **Database:** PostgreSQL with **PostGIS** extension
-- **Deployment:** Vercel (Frontend), Google Cloud Run (Backend)
+- **Deployment:** Google Cloud Run 
 
 ---
 
