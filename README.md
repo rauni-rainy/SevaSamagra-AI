@@ -114,14 +114,10 @@ npm run dev
 
 ## ☁️ Deployment
 
-### Backend (Google Cloud Run)
+### Backend and Frontend (Google Cloud Run)
 The backend is containerized and designed to be deployed on Google Cloud Run. Ensure you have the `gcloud` CLI installed and authenticated. Set your environment variables in the Cloud Run service configuration and ensure your Cloud Run service has access to your managed PostgreSQL database (e.g., via Cloud SQL connector).
 
-### Frontend (Vercel)
-1. Push your code to GitHub.
-2. Import the `frontend` directory as a new project in Vercel.
-3. Add the required `NEXT_PUBLIC_*` environment variables in the Vercel dashboard.
-4. Deploy.
+
 
 ---
 
