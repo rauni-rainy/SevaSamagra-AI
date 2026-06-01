@@ -1,0 +1,8 @@
+# Environment variables
+.env
+
+# Optional variants
+.env.local
+.env.development
+.env.production
+.env.test
